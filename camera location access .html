@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>GPS + Front/Back Camera Demo (with Auto-upload & History)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <style>
+    :root{--bg:#0f172a;--card:#0b1220;--accent:#06b6d4;--muted:#9ca3af;}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;background:linear-gradient(180deg,#071021 0%, #051226 100%);color:#e6eef8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+    .wrap{width:100%;max-width:1100px;background:linear-gradient(180deg,rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:14px;padding:18px;box-shadow:0 6px 30px rgba(2,6,23,0.6)}
+    h1{font-size:20px;margin:0 0 8px}
+    p{margin:0 0 12px;color:var(--muted)}
+    .grid{display:grid;grid-template-columns:1fr 420px;gap:12px}
+    .card{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px}
+    video{width:100%;height:260px;border-radius:8px;background:#000;object-fit:cover}
+    #map{width:100%;height:240px;border-radius:8px}
+    .controls{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    button{background:var(--accent);color:#022;border:none;padding:8px 10px;border-radius:8px;cursor:pointer;font-weight:600}
+    .small{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);padding:6px 8px}
+    pre{white-space:pre-wrap;color:var(--muted);font-size:13px}
+    .row{display:flex;gap:8px;align-items:center}
+    .coords{font-weight:700}
+    input[type=text]{width:100%;padding:8px;border-radius:6px;border:1px solid rgba(255,255,255,0.06);background:transparent;color:var(--muted)}
+    table{width:100%;border-collapse:collapse;margin-top:8px}
+    th,td{padding:6px;border-bottom:1px solid rgba(255,255,255,0.03);font-size:13px}
+    @media (max-width:980px){.grid{grid-template-columns:1fr;}.card{padding:10px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>GPS + Camera (front/back) — with Auto-upload & Location History</h1>
+    <p>Camera facing toggle, auto-upload snapshots/location to a configurable server, and location history export added.</p>
+
+    <div class="grid">
+      <div class="card">
+        <div>
+          <label style="display:block;margin-bottom:8px;font-weight:600">Camera preview</label>
+          <video id="video" playsinline autoplay muted></video>
+          <div class="controls">
+            <button id="startCamera">Start Camera</button>
+            <button id="stopCamera" class="small">Stop</button>
+            <button id="toggleFacing" class="small">Facing: user</button>
+            <button id="takePhoto" class="small">Take Snapshot</button>
+            <a id="downloadLink" class="small" style="display:none">Download Photo</a>
+          </div>
+
+          <div style="margin-top:10px">
+            <label style="font-weight:600">Auto-upload snapshot?</label>
+            <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+              <input type="checkbox" id="autoUpload"> <label for="autoUpload" style="color:var(--muted)">Enable</label>
+              <input id="serverUrl" type="text" placeholder="Server URL to POST (e.g. https://example.com/upload)" />
+            </div>
+            <div style="margin-top:8px;color:var(--muted);font-size:13px">Snapshot POST payload: { filename, image (dataURL), lat, lon, accuracy }</div>
+          </div>
+
+          <div style="margin-top:10px">
+            <canvas id="canvas" style="display:none"></canvas>
+            <img id="photo" alt="snapshot" style="width:100%;margin-top:8px;border-radius:8px;display:none" />
+          </div>
+
+          <div style="margin-top:8px"><pre id="camStatus">Camera: idle</pre></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div>
+          <label style="display:block;margin-bottom:8px;font-weight:600">GPS Location</label>
+          <div class="row">
+            <button id="getLocation">Get Current Location</button>
+            <button id="watchLocation" class="small">Start Watch</button>
+            <button id="stopWatch" class="small">Stop Watch</button>
+          </div>
+
+          <div style="margin-top:10px">
+            <pre id="status">Status: idle</pre>
+            <div style="margin-top:8px">Latitude: <span id="lat" class="coords">—</span></div>
+            <div>Longitude: <span id="lon" class="coords">—</span></div>
+            <div style="margin-top:10px">Accuracy: <span id="acc">—</span> meters</div>
+          </div>
+
+          <div style="margin-top:8px">
+            <label style="font-weight:600">Auto-upload location?</label>
+            <div style="display:flex;gap:8px;margin-top:6px;align-items:center">
+              <input type="checkbox" id="autoUploadLoc"> <label for="autoUploadLoc" style="color:var(--muted)">Enable</label>
+            </div>
+          </div>
+
+          <div id="map" style="margin-top:12px"></div>
+
+          <div style="margin-top:10px">
+            <div style="display:flex;gap:8px;align-items:center;justify-content:space-between">
+              <div>
+                <button id="exportCsv" class="small">Export Location CSV</button>
+                <button id="clearHistory" class="small">Clear History</button>
+              </div>
+              <div style="color:var(--muted);font-size:13px">History entries: <span id="historyCount">0</span></div>
+            </div>
+            <div style="margin-top:8px;max-height:160px;overflow:auto">
+              <table id="historyTable"><thead><tr><th>Time</th><th>Lat</th><th>Lon</th><th>Acc(m)</th></tr></thead><tbody></tbody></table>
+            </div>
+          </div>
+
+          <p style="margin-top:10px;color:var(--muted);font-size:13px">Note: For privacy, location & camera permissions are requested each session. Use only on secure origin (https or localhost).</p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+  <script>
+    // Elements
+    const video = document.getElementById('video');
+    const startBtn = document.getElementById('startCamera');
+    const stopBtn = document.getElementById('stopCamera');
+    const toggleFacingBtn = document.getElementById('toggleFacing');
+    const takeBtn = document.getElementById('takePhoto');
+    const canvas = document.getElementById('canvas');
+    const photo = document.getElementById('photo');
+    const downloadLink = document.getElementById('downloadLink');
+    const camStatus = document.getElementById('camStatus');
+    const autoUploadCheckbox = document.getElementById('autoUpload');
+    const serverUrlInput = document.getElementById('serverUrl');
+
+    let stream = null;
+    let facingMode = 'user'; // 'user' or 'environment'
+
+    async function startCamera() {
+      const constraints = { video: { facingMode: { exact: facingMode }}, audio: false };
+      // some devices don't support exact; fallback
+      try {
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+      } catch (e) {
+        // fallback to ideal
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facingMode }, width:{ideal:1280},height:{ideal:720} }, audio: false });
+        } catch (err) {
+          console.error('Camera error', err);
+          alert('Camera access failed: ' + err.message + '
+Make sure you are on HTTPS or localhost and allowed camera permission.');
+          camStatus.textContent = 'Camera: error';
+          return;
+        }
+      }
+      video.srcObject = stream;
+      camStatus.textContent = 'Camera: running (' + facingMode + ')';
+      toggleFacingBtn.textContent = 'Facing: ' + facingMode;
+    }
+
+    function stopCamera() {
+      if (!stream) return;
+      const tracks = stream.getTracks();
+      tracks.forEach(t => t.stop());
+      video.srcObject = null;
+      stream = null;
+      camStatus.textContent = 'Camera: stopped';
+    }
+
+    toggleFacingBtn.addEventListener('click', async () => {
+      facingMode = (facingMode === 'user') ? 'environment' : 'user';
+      toggleFacingBtn.textContent = 'Facing: ' + facingMode;
+      // restart if running
+      if (stream) { stopCamera(); await startCamera(); }
+    });
+
+    startBtn.addEventListener('click', startCamera);
+    stopBtn.addEventListener('click', stopCamera);
+
+    // Take snapshot and optionally auto-upload
+    takeBtn.addEventListener('click', async () => {
+      if (!stream) { alert('Camera not running'); return; }
+      const track = stream.getVideoTracks()[0];
+      const settings = track.getSettings();
+      const w = video.videoWidth || settings.width || 640;
+      const h = video.videoHeight || settings.height || 480;
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, w, h);
+      const dataUrl = canvas.toDataURL('image/png');
+      photo.src = dataUrl; photo.style.display = 'block';
+      downloadLink.href = dataUrl; downloadLink.download = 'snapshot.png'; downloadLink.style.display = 'inline-block'; downloadLink.textContent = 'Download Photo';
+
+      // Auto-upload if enabled
+      if (autoUploadCheckbox.checked) {
+        const server = serverUrlInput.value.trim();
+        if (!server) { alert('Set server URL to auto-upload'); return; }
+        camStatus.textContent = 'Uploading snapshot...';
+        // include latest known location if available
+        const latest = locationHistory.length ? locationHistory[locationHistory.length-1] : null;
+        try {
+          await uploadSnapshot(server, dataUrl, latest);
+          camStatus.textContent = 'Snapshot uploaded';
+        } catch (err) {
+          camStatus.textContent = 'Upload failed';
+          console.error(err);
+          alert('Upload failed: ' + err.message);
+        }
+      }
+    });
+
+    async function uploadSnapshot(serverUrl, dataUrl, location) {
+      const payload = {
+        filename: 'snapshot_' + Date.now() + '.png',
+        image: dataUrl,
+        location: location || null
+      };
+      const res = await fetch(serverUrl, { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify(payload) });
+      if (!res.ok) throw new Error('Server responded ' + res.status);
+      return res.json ? await res.json() : true;
+    }
+
+    // GEOLOCATION
+    const status = document.getElementById('status');
+    const latEl = document.getElementById('lat');
+    const lonEl = document.getElementById('lon');
+    const accEl = document.getElementById('acc');
+    const getLocBtn = document.getElementById('getLocation');
+    const watchBtn = document.getElementById('watchLocation');
+    const stopWatchBtn = document.getElementById('stopWatch');
+    const autoUploadLocCheckbox = document.getElementById('autoUploadLoc');
+
+    let watchId = null;
+    let locationHistory = [];
+
+    function showPosition(pos) {
+      const { latitude, longitude, accuracy } = pos.coords;
+      latEl.textContent = latitude.toFixed(6);
+      lonEl.textContent = longitude.toFixed(6);
+      accEl.textContent = accuracy;
+      const time = new Date().toISOString();
+      status.textContent = 'Status: location obtained at ' + new Date().toLocaleTimeString();
+      updateMap(latitude, longitude);
+
+      // save history
+      const entry = { time, latitude, longitude, accuracy };
+      locationHistory.push(entry);
+      renderHistory();
+
+      // auto-upload location if enabled
+      if (autoUploadLocCheckbox.checked) {
+        const server = serverUrlInput.value.trim();
+        if (!server) {
+          console.warn('server URL not set for auto-upload');
+        } else {
+          // try POSTing minimal location JSON
+          fetch(server, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'location', entry }) })
+            .then(r => { if (!r.ok) console.warn('Location upload failed', r.status); })
+            .catch(e => console.warn('Location upload error', e));
+        }
+      }
+    }
+
+    function handleError(err) {
+      console.warn('Geolocation error', err);
+      status.textContent = 'Status: geolocation error - ' + err.message;
+    }
+
+    getLocBtn.addEventListener('click', () => {
+      status.textContent = 'Status: requesting current position...';
+      if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
+      navigator.geolocation.getCurrentPosition(showPosition, handleError, { enableHighAccuracy: true, timeout: 10000 });
+    });
+
+    watchBtn.addEventListener('click', () => {
+      if (!navigator.geolocation) { alert('Geolocation not supported'); return; }
+      if (watchId !== null) { alert('Already watching'); return; }
+      status.textContent = 'Status: watching position...';
+      watchId = navigator.geolocation.watchPosition(showPosition, handleError, { enableHighAccuracy: true, maximumAge: 3000, timeout: 10000 });
+    });
+
+    stopWatchBtn.addEventListener('click', () => {
+      if (watchId !== null) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        status.textContent = 'Status: watch stopped';
+      }
+    });
+
+    // MAP USING LEAFLET
+    let map = L.map('map', { center: [20.5937,78.9629], zoom: 5, zoomControl: true });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' }).addTo(map);
+    let marker = null;
+    function updateMap(lat, lon) { map.setView([lat, lon], 15); if (!marker) marker = L.marker([lat, lon]).addTo(map); else marker.setLatLng([lat, lon]); }
+
+    // HISTORY UI
+    const historyTbody = document.querySelector('#historyTable tbody');
+    const historyCount = document.getElementById('historyCount');
+    const exportCsvBtn = document.getElementById('exportCsv');
+    const clearHistoryBtn = document.getElementById('clearHistory');
+
+    function renderHistory() {
+      historyTbody.innerHTML = '';
+      locationHistory.slice().reverse().forEach(e => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${new Date(e.time).toLocaleString()}</td><td>${e.latitude.toFixed(6)}</td><td>${e.longitude.toFixed(6)}</td><td>${e.accuracy}</td>`;
+        historyTbody.appendChild(tr);
+      });
+      historyCount.textContent = locationHistory.length;
+    }
+
+    exportCsvBtn.addEventListener('click', () => {
+      if (!locationHistory.length) { alert('No history to export'); return; }
+      const rows = [['time','latitude','longitude','accuracy']].concat(locationHistory.map(e => [e.time, e.latitude, e.longitude, e.accuracy]));
+      const csv = rows.map(r => r.map(cell => '"' + String(cell).replace(/"/g,'""') + '"').join(',')).join('
+');
+      const blob = new Blob([csv], { type:'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'location_history_' + Date.now() + '.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    });
+
+    clearHistoryBtn.addEventListener('click', () => { if (confirm('Clear location history?')) { locationHistory = []; renderHistory(); } });
+
+    // Permissions check (best-effort)
+    async function checkPermissions() {
+      try {
+        if (!navigator.permissions) return;
+        const geoPerm = await navigator.permissions.query({ name: 'geolocation' });
+        console.log('Geo perm:', geoPerm.state);
+      } catch (err) {}
+    }
+    checkPermissions();
+
+    // Helpful server note in UI: the server should accept JSON POSTs for snapshots/locations.
+  </script>
+</body>
+</html>
